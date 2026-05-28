@@ -12,8 +12,8 @@ import pandas as pd
 # =========================
 st.set_page_config(page_title="장비 불출 관리", layout="wide")
 
-LOGO = "aaron_logo"
-EQUIP_FILE = "AARON_Equipments_List"
+LOGO = "aaron_logo.jpg"
+EQUIP_FILE = "AARON_Equipments_List.xlsx"
 EQUIP_SHEET = "장비통합"   # 장비 리스트 시트명
 KEY_COL = "관리 NO."      # 선택 키 컬럼명
 
@@ -28,7 +28,7 @@ with head_l:
         st.empty()
 
 with head_r:
-    st.title("장비 불출 자동화 시스템")
+    st.title("장비 불출 시스템")
 
 # =========================
 # 장비 마스터 로딩 (요구사항 2)
