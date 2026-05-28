@@ -3,7 +3,7 @@
 # git commit -m "UI/마스터 업데이트/사용목적 입력 방식 수정"
 # git push
 
-import base64
+import os
 import streamlit as st
 from datetime import datetime
 import pandas as pd
@@ -14,63 +14,41 @@ import pandas as pd
 st.set_page_config(page_title="장비 불출 관리", layout="wide")
 
 LOGO = "aaron_logo.jpg"
-EQUIP_FILE = "AARON_Equipments_List.xlsx"
-EQUIP_SHEET = "장비통합"   # 장비 리스트 시트명
-KEY_COL = "관리 NO."      # 선택 키 컬럼명
 
-# 마스터 업데이트 대상 컬럼명(엑셀에 존재)
+EQUIP_FILE = "AARON_Equipments_List.xlsx"
+EQUIP_SHEET = "장비통합"
+KEY_COL = "관리 NO."
+
+# ✅ 불출 이력 파일(새로 추가)
+HISTORY_FILE = "AARON_Issue_History.xlsx"
+HISTORY_SHEET = "불출이력"
+
+# 마스터 업데이트 대상 컬럼(엑셀에 존재) 
 COL_RECENT_LOC = "최근 위치(위치명, 확인날짜기록)"
 COL_LOC_DATE   = "위치 확인 날짜"
 COL_OUT_DATE   = "반출 일자"
 COL_OUT_LOC    = "반출 위치"
 
 # =========================
-# 로고를 HTML로 렌더링(제목 옆 + 아래로 약간 내리기)
+# 헤더(안전하게 로고를 제목 위)
 # =========================
-def img_to_base64(path: str) -> str:
-    with open(path, "rb") as f:
-        return base64.b64encode(f.read()).decode()
+try:
+    st.image(LOGO, width=170)  # 필요하면 여기만 조절
+except Exception:
+    pass
 
-def render_header():
-    try:
-        b64 = img_to_base64(LOGO)
-        st.markdown(
-            f"""
-            <div style="display:flex; align-items:flex-start; gap:14px; margin: 6px 0 12px 0;">
-                <img src="data:image/jpg;base64,{b64}"
-                     style="
-                        width:120px;
-                        margin-top:18px;   /* 👈 로고를 아래로 내리는 핵심 */
-                     " />
-                <div>
-                    <div style="font-size:44px; font-weight:800; line-height:1.05; margin:0;">
-                        장비 불출 시스템
-                    </div>
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-    except Exception:
-        st.title("장비 불출 시스템")
-
-render_header()
+st.title("장비 불출 시스템")
 
 # =========================
-# 장비 마스터 로딩
+# 장비 마스터 로딩/저장
 # =========================
 @st.cache_data(show_spinner=False)
 def load_equipment_master(path: str) -> pd.DataFrame:
     df = pd.read_excel(path, sheet_name=EQUIP_SHEET, engine="openpyxl")
-
-    # 엑셀 병합/빈열 때문에 생기는 Unnamed 컬럼 제거
     df.columns = df.columns.map(str)
     df = df.loc[:, ~df.columns.str.startswith("Unnamed")]
-
-    # 결측치 정리
     df = df.fillna("")
 
-    # 키 컬럼 정리
     if KEY_COL in df.columns:
         df[KEY_COL] = df[KEY_COL].astype(str).str.strip()
         df = df[df[KEY_COL] != ""]
@@ -78,8 +56,7 @@ def load_equipment_master(path: str) -> pd.DataFrame:
     return df
 
 def save_equipment_master(path: str, df: pd.DataFrame):
-    # 원본 시트명 유지해서 덮어쓰기
-    # (환경에 따라 쓰기 실패 가능 → 호출부에서 try/except)
+    # "장비통합" 시트를 덮어쓰기
     with pd.ExcelWriter(path, engine="openpyxl", mode="a", if_sheet_exists="replace") as writer:
         df.to_excel(writer, sheet_name=EQUIP_SHEET, index=False)
 
@@ -99,26 +76,73 @@ if equip_df.empty or KEY_COL not in equip_df.columns:
     st.stop()
 
 # =========================
-# 세션 초기화
+# ✅ 불출 이력: 생성/누적 저장 유틸
+# =========================
+HISTORY_COLS = [
+    "불출 일시", "불출 일자",
+    "불출자", "부서",
+    "관리 NO.", "serial NO.", "장비명", "모델명", "제조회사", "장비 구분",
+    "창고", "사용 목적",
+    "반납 예정일",
+    "상태",
+]
+
+def append_issue_history(new_row: dict):
+    """
+    - HISTORY_FILE 없으면 생성
+    - 있으면 읽어서 append 후 저장
+    """
+    row_df = pd.DataFrame([{c: new_row.get(c, "") for c in HISTORY_COLS}])
+
+    if not os.path.exists(HISTORY_FILE):
+        # 파일이 없으면 새로 생성
+        with pd.ExcelWriter(HISTORY_FILE, engine="openpyxl") as writer:
+            row_df.to_excel(writer, sheet_name=HISTORY_SHEET, index=False)
+        return
+
+    # 파일이 있으면 기존 로드 후 append
+    try:
+        old = pd.read_excel(HISTORY_FILE, sheet_name=HISTORY_SHEET, engine="openpyxl")
+        old.columns = old.columns.map(str)
+    except Exception:
+        # 시트가 없거나 깨졌으면 새로 생성(안전)
+        old = pd.DataFrame(columns=HISTORY_COLS)
+
+    # 컬럼 보정
+    for c in HISTORY_COLS:
+        if c not in old.columns:
+            old[c] = ""
+
+    combined = pd.concat([old[HISTORY_COLS], row_df], ignore_index=True)
+
+    # 덮어쓰기 저장
+    with pd.ExcelWriter(HISTORY_FILE, engine="openpyxl", mode="a", if_sheet_exists="replace") as writer:
+        combined.to_excel(writer, sheet_name=HISTORY_SHEET, index=False)
+
+@st.cache_data(show_spinner=False)
+def load_issue_history() -> pd.DataFrame:
+    if not os.path.exists(HISTORY_FILE):
+        return pd.DataFrame(columns=HISTORY_COLS)
+    try:
+        df = pd.read_excel(HISTORY_FILE, sheet_name=HISTORY_SHEET, engine="openpyxl")
+        df.columns = df.columns.map(str)
+        return df
+    except Exception:
+        return pd.DataFrame(columns=HISTORY_COLS)
+
+# =========================
+# 세션 초기화(화면 표시용)
 # =========================
 if "records" not in st.session_state:
     st.session_state.records = []
 
 # =========================
-# 불출 기록을 기준으로 "표시용 마스터"를 갱신
+# 화면 표시용 마스터 업데이트
 # =========================
 def build_updated_master(df_master: pd.DataFrame, records: list[dict]) -> pd.DataFrame:
-    """
-    화면 표시용 마스터 데이터:
-    - 불출 기록이 있는 관리 NO.에 대해
-      최근 위치 = '불출'
-      위치 확인 날짜 = 불출일자(오늘)
-      반출 일자 = 불출일자(오늘)
-      반출 위치 = 사용 목적(입력 문자열)
-    """
     df = df_master.copy()
 
-    # 컬럼 없으면 생성(안전)
+    # 컬럼 없으면 생성(안전) 
     for c in [COL_RECENT_LOC, COL_LOC_DATE, COL_OUT_DATE, COL_OUT_LOC]:
         if c not in df.columns:
             df[c] = ""
@@ -127,16 +151,17 @@ def build_updated_master(df_master: pd.DataFrame, records: list[dict]) -> pd.Dat
         mno = str(r.get("관리 NO.", "")).strip()
         if not mno:
             continue
+
         mask = df[KEY_COL].astype(str).str.strip() == mno
         if not mask.any():
             continue
 
-        issue_date = r.get("불출 일자(표시)", "")  # yyyy.mm.dd
+        issue_date_dot = r.get("불출 일자", "")
         purpose = r.get("사용 목적", "")
 
         df.loc[mask, COL_RECENT_LOC] = "불출"
-        df.loc[mask, COL_LOC_DATE] = issue_date
-        df.loc[mask, COL_OUT_DATE] = issue_date
+        df.loc[mask, COL_LOC_DATE] = issue_date_dot
+        df.loc[mask, COL_OUT_DATE] = issue_date_dot
         df.loc[mask, COL_OUT_LOC] = purpose
 
     return df
@@ -171,10 +196,7 @@ equip_info = {
 
 with sel_col2:
     st.markdown("**선택 장비 정보**")
-    st.dataframe(
-        pd.DataFrame([equip_info]).T.rename(columns={0: "값"}),
-        use_container_width=True
-    )
+    st.dataframe(pd.DataFrame([equip_info]).T.rename(columns={0: "값"}), use_container_width=True)
 
 # =========================
 # 불출 입력 폼
@@ -198,56 +220,59 @@ with st.form("issue_form"):
         warehouse = st.selectbox("창고 위치", ["3층", "4층"])
         return_date = st.date_input("반납 예정일")
 
-    # ✅ 요구사항 2: 사용 목적 직접 입력
+    # 사용 목적 직접 입력
     purpose = st.text_input("사용 목적", placeholder="예: 현장 불출, 유지보수, 프로젝트명 등")
 
     submitted = st.form_submit_button("✅ 불출 등록")
 
 # =========================
-# 제출 처리 (수량 제거 + 마스터 업데이트)
+# 제출 처리: 화면 이력 + 엑셀 이력 append + 마스터 업데이트
 # =========================
 if submitted:
     if not user_name:
         st.warning("⚠️ 불출자 이름은 필수입니다.")
     elif not purpose.strip():
-        st.warning("⚠️ 사용 목적은 필수입니다. (직접 입력)")
+        st.warning("⚠️ 사용 목적은 필수입니다.")
     else:
         now = datetime.now()
         issue_datetime = now.strftime("%Y-%m-%d %H:%M:%S")
-        issue_date_dot = now.strftime("%Y.%m.%d")  # 엑셀 기존 표기와 유사하게 점(.) 포맷
+        issue_date_dot = now.strftime("%Y.%m.%d")
 
+        # 화면 표시용 record
         record = {
             "불출자": user_name,
             "부서": department,
-
             "관리 NO.": equip_info["관리 NO."],
             "serial NO.": equip_info["serial NO."],
             "장비명": equip_info["장비명"],
             "모델명": equip_info["모델명"],
             "제조회사": equip_info["제조회사"],
             "장비 구분": equip_info["장비 구분"],
-
             "창고": warehouse,
             "사용 목적": purpose.strip(),
-
             "불출 일시": issue_datetime,
-            "불출 일자(표시)": issue_date_dot,
+            "불출 일자": issue_date_dot,
             "반납 예정일": return_date.strftime("%Y-%m-%d"),
             "상태": "불출",
         }
-
         st.session_state.records.append(record)
 
-        # ✅ 마스터(화면표시용) 갱신 + 엑셀 저장 시도
+        # ✅ (1) 불출 이력 엑셀에 누적 저장
+        try:
+            append_issue_history(record)
+            st.cache_data.clear()  # load_issue_history 캐시 갱신
+        except Exception as e:
+            st.warning(f"이력 저장 중 오류가 발생했습니다(환경 권한/경로 확인 필요): {e}")
+
+        # ✅ (2) 마스터 업데이트(화면 + 가능하면 파일에도 반영)
         updated_master = build_updated_master(equip_df, st.session_state.records)
 
         try:
             save_equipment_master(EQUIP_FILE, updated_master)
-            # 저장 성공 시, 캐시 갱신을 위해 clear
             st.cache_data.clear()
             equip_df = load_equipment_master(EQUIP_FILE)
         except Exception:
-            # 저장이 안 되는 환경도 있을 수 있으니, 화면에서만 갱신되도록 유지
+            # 저장이 막힌 환경이면 화면만 갱신됨
             pass
 
         st.success("✅ 불출 등록 완료!")
@@ -259,16 +284,22 @@ st.divider()
 st.subheader("📋 현재 불출 현황")
 
 if st.session_state.records:
-    df_records = pd.DataFrame(st.session_state.records).drop(columns=["불출 일자(표시)"], errors="ignore")
-    st.dataframe(df_records, use_container_width=True)
+    st.dataframe(pd.DataFrame(st.session_state.records), use_container_width=True)
 else:
     st.info("아직 등록된 불출 내역이 없습니다.")
 
 # =========================
-# ✅ 요구사항 3: 마스터 데이터는 '현재 불출 현황' 아래에 항상 표시 + 자동 업데이트
+# ✅ 불출 이력(영구 로그) 표시
+# =========================
+st.subheader("📒 불출 이력 ")
+
+history_df = load_issue_history()
+st.dataframe(history_df, use_container_width=True)
+
+# =========================
+# 마스터 데이터(항상 표시 + 자동 업데이트)
 # =========================
 st.subheader("📌 장비 리스트 전체 보기 (마스터 데이터)")
 
-# 화면 표시는 항상 records 기반으로 즉시 갱신된 버전 사용
 updated_master_view = build_updated_master(equip_df, st.session_state.records)
 st.dataframe(updated_master_view, use_container_width=True)
