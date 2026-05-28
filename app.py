@@ -12,8 +12,8 @@ import pandas as pd
 # =========================
 st.set_page_config(page_title="장비 불출 관리", layout="wide")
 
-LOGO = "aaron_logo.jpg"
-EQUIP_FILE = "AARON_Equipments_List.xlsx"
+LOGO = "aaron_logo"
+EQUIP_FILE = "AARON_Equipments_List"
 EQUIP_SHEET = "장비통합"   # 장비 리스트 시트명
 KEY_COL = "관리 NO."      # 선택 키 컬럼명
 
@@ -106,10 +106,11 @@ equip_info = {
 
 with sel_col2:
     st.markdown("**선택 장비 정보**")
-    st.write(
-        pd.DataFrame([equip_info]).T.rename(columns={0: "값"}),
-        use_container_width=True
-    )
+    st.dataframe(
+    pd.DataFrame([equip_info]).T.rename(columns={0: "값"}),
+    use_container_width=True
+)
+
 
 with st.expander("📌 장비 리스트 전체 보기 (마스터 데이터)", expanded=False):
     st.dataframe(equip_df, use_container_width=True)
