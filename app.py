@@ -144,7 +144,7 @@ def build_updated_master(df_master: pd.DataFrame, records: list[dict]) -> pd.Dat
 # =========================
 # 장비 선택 UI
 # =========================
-st.subheader("🧰 장비 선택 (관리 NO. 기준)")
+st.subheader("장비 선택 (관리 NO. 기준)")
 
 manage_no_list = equip_df[KEY_COL].astype(str).tolist()
 sel_col1, sel_col2 = st.columns([2, 3])
