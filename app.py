@@ -136,6 +136,14 @@ def load_issue_history() -> pd.DataFrame:
 if "records" not in st.session_state:
     st.session_state.records = []
 
+# ✅ 앱 시작 시 불출 이력에서 세션 복원
+if not st.session_state.get("initialized", False):
+    history_df = load_issue_history()
+    if not history_df.empty:
+        st.session_state.records = history_df.to_dict("records")
+    st.session_state.initialized = True
+
+
 # =========================
 # 화면 표시용 마스터 업데이트
 # =========================
