@@ -1,3 +1,4 @@
+# DB 연동 완료, 불출 기능만 있는 코드
 # streamlit run app.py
 # git add .
 # git commit -m "UI/마스터 업데이트/사용목적 입력 방식 수정"
