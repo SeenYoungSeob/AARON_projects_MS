@@ -15,7 +15,7 @@ from supabase import create_client, Client
 # =========================
 # 설정
 # =========================
-st.set_page_config(page_title="장비 불출 관리", layout="wide")
+st.set_page_config(page_title="장비 불출/반납 관리", layout="wide")
 
 LOGO = "aaron_logo.jpg"
 
