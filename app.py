@@ -38,7 +38,7 @@ try:
 except Exception:
     pass
 
-st.title("장비 불출 시스템")
+st.title("장비 불출/반납 시스템")
 
 # =========================
 # Supabase 연결
