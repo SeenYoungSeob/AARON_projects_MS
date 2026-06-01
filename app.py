@@ -1,6 +1,6 @@
 # streamlit run app.py
 # git add .
-# git commit -m "불출/반납 통합, KST 적용, 권한 분리, 원위치 복구 추가"
+# git commit -m "불출/반납 탭 분리, 반납 기능 추가, KST 적용"
 # git push
 
 import json
@@ -34,6 +34,27 @@ ORIGIN_CACHE_FILE = "issue_origin_cache.json"
 KST = ZoneInfo("Asia/Seoul")
 
 # =========================
+# 스타일 (탭 UI 느낌 강화)
+# =========================
+st.markdown("""
+<style>
+div[data-baseweb="tab-list"] {
+    gap: 24px;
+}
+button[data-baseweb="tab"] {
+    font-size: 18px;
+    font-weight: 700;
+    padding-top: 8px;
+    padding-bottom: 8px;
+}
+button[data-baseweb="tab"][aria-selected="true"] {
+    color: #ff4b4b !important;
+    border-bottom: 3px solid #ff4b4b !important;
+}
+</style>
+""", unsafe_allow_html=True)
+
+# =========================
 # 헤더
 # =========================
 try:
@@ -56,9 +77,6 @@ def format_dt(dt_obj: datetime) -> str:
 def format_date_dot(dt_obj: datetime) -> str:
     return dt_obj.strftime("%Y.%m.%d")
 
-def format_date_dash(dt_obj: datetime) -> str:
-    return dt_obj.strftime("%Y-%m-%d")
-
 def parse_dt_safe(value):
     try:
         return pd.to_datetime(value, errors="coerce")
@@ -69,24 +87,6 @@ def safe_str(x) -> str:
     if pd.isna(x):
         return ""
     return str(x).strip()
-
-# =========================
-# 권한 설정
-# =========================
-# secrets.toml 예시
-# ADMIN_USERS = ["admin", "manager1"]
-# USER_USERS = ["user1", "user2"]
-
-def get_user_role(user_id: str) -> str:
-    user_id = safe_str(user_id)
-    admin_users = st.secrets.get("ADMIN_USERS", [])
-    user_users = st.secrets.get("USER_USERS", [])
-
-    if user_id in admin_users:
-        return "관리자"
-    if user_id in user_users:
-        return "사용자"
-    return "사용자"
 
 # =========================
 # Supabase 연결
@@ -155,7 +155,7 @@ def save_origin_cache(data: dict):
         with open(ORIGIN_CACHE_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
     except Exception as e:
-        st.warning(f"원위치 캐시 저장 실패(배포환경/권한 이슈 가능): {e}")
+        st.warning(f"원위치 캐시 저장 실패(권한/환경 이슈 가능): {e}")
 
 def set_origin_cache(manage_no: str, payload: dict):
     cache = load_origin_cache()
@@ -165,12 +165,6 @@ def set_origin_cache(manage_no: str, payload: dict):
 def get_origin_cache(manage_no: str) -> dict:
     cache = load_origin_cache()
     return cache.get(manage_no, {})
-
-def pop_origin_cache(manage_no: str):
-    cache = load_origin_cache()
-    if manage_no in cache:
-        cache.pop(manage_no, None)
-        save_origin_cache(cache)
 
 # =========================
 # DB 컬럼 정의
@@ -312,11 +306,8 @@ if "initialized" not in st.session_state:
         st.session_state.records = history_df.to_dict("records")
     st.session_state.initialized = True
 
-if "selected_return_target" not in st.session_state:
-    st.session_state.selected_return_target = ""
-
 # =========================
-# 화면 표시용 마스터 업데이트
+# 마스터 업데이트
 # =========================
 def build_updated_master(df_master: pd.DataFrame, records: list[dict]) -> pd.DataFrame:
     df = df_master.copy()
@@ -349,7 +340,6 @@ def build_updated_master(df_master: pd.DataFrame, records: list[dict]) -> pd.Dat
             restored_date = safe_str(origin_info.get("loc_date", ""))
 
             if not restored_loc:
-                # fallback: 창고 기준 복구
                 restored_loc = f"본사, {warehouse} 창고" if warehouse else "반납"
             if not restored_date:
                 restored_date = event_date
@@ -362,35 +352,10 @@ def build_updated_master(df_master: pd.DataFrame, records: list[dict]) -> pd.Dat
     return df
 
 # =========================
-# 사이드바: 사용자/권한/모드
+# 장비 선택용 헬퍼
 # =========================
-with st.sidebar:
-    st.subheader("사용자 설정")
-    input_user_id = st.text_input("사용자 ID", value=st.session_state.get("user_id", ""))
-    input_user_name = st.text_input("이름", value=st.session_state.get("user_name", ""))
-    input_department = st.text_input("부서", value=st.session_state.get("department", ""))
-
-    st.session_state.user_id = safe_str(input_user_id)
-    st.session_state.user_name = safe_str(input_user_name)
-    st.session_state.department = safe_str(input_department)
-    st.session_state.role = get_user_role(st.session_state.user_id)
-
-    st.success(f"권한: {st.session_state.role}")
-
-    mode = st.radio(
-        "작업 모드",
-        ["🔐 불출", "📥 반납"],
-        horizontal=False
-    )
-
-# =========================
-# 장비 선택 UI (불출용)
-# =========================
-manage_no_list = equip_df[KEY_COL].astype(str).tolist()
-
 def get_selected_row(df: pd.DataFrame, manage_no: str) -> pd.Series:
-    row = df.loc[df[KEY_COL].astype(str) == str(manage_no)].iloc[0]
-    return row
+    return df.loc[df[KEY_COL].astype(str) == str(manage_no)].iloc[0]
 
 def build_equip_info(selected_row: pd.Series, df: pd.DataFrame) -> dict:
     def safe_get(col):
@@ -409,10 +374,17 @@ def build_equip_info(selected_row: pd.Series, df: pd.DataFrame) -> dict:
     }
 
 # =========================
-# 불출 모드
+# 상단 탭 분리
 # =========================
-if mode == "🔐 불출":
+tab_issue, tab_return = st.tabs(["불출", "반납"])
+
+# =========================
+# 🔐 불출 탭
+# =========================
+with tab_issue:
     st.subheader("장비 선택 (관리 NO. 기준)")
+
+    manage_no_list = equip_df[KEY_COL].astype(str).tolist()
 
     sel_col1, sel_col2 = st.columns([2, 3])
 
@@ -440,8 +412,8 @@ if mode == "🔐 불출":
         col1, col2, col3 = st.columns(3)
 
         with col1:
-            user_name = st.text_input("불출자 이름", value=st.session_state.get("user_name", ""))
-            department = st.text_input("소속 부서", value=st.session_state.get("department", ""))
+            user_name = st.text_input("불출자 이름")
+            department = st.text_input("소속 부서")
 
         with col2:
             st.text_input("관리 NO.", value=equip_info["관리 NO."], disabled=True)
@@ -450,7 +422,7 @@ if mode == "🔐 불출":
             st.text_input("모델명", value=equip_info["모델명"], disabled=True)
 
         with col3:
-            warehouse = st.selectbox("창고 위치", ["3층", "4층"])
+            warehouse = st.selectbox("창고 위치", ["3층", "4층"], key="issue_warehouse")
             return_date = st.date_input("반납 예정일")
 
         purpose = st.text_input("사용 목적", placeholder="예: 현장 불출, 유지보수, 프로젝트명 등")
@@ -517,9 +489,9 @@ if mode == "🔐 불출":
                 st.rerun()
 
 # =========================
-# 반납 모드
+# 📥 반납 탭
 # =========================
-elif mode == "📥 반납":
+with tab_return:
     st.subheader("📥 불출 중 장비 목록")
 
     current_issued = get_current_issued_records(st.session_state.records)
@@ -527,118 +499,90 @@ elif mode == "📥 반납":
     if not current_issued:
         st.info("현재 불출 중인 장비가 없습니다.")
     else:
-        # 자동 필터 목록 + 반납 버튼
-        for rec in current_issued:
-            mno = safe_str(rec.get("관리 NO.", ""))
-            item_name = safe_str(rec.get("장비명", ""))
-            purpose = safe_str(rec.get("사용 목적", ""))
-            issue_dt = safe_str(rec.get("불출 일시", ""))
-            issue_user = safe_str(rec.get("불출자", ""))
+        issued_options = [
+            f"{safe_str(r.get('관리 NO.', ''))} | {safe_str(r.get('장비명', ''))} | {safe_str(r.get('사용 목적', ''))}"
+            for r in current_issued
+        ]
 
-            c1, c2, c3, c4, c5 = st.columns([2, 3, 3, 3, 1])
-            with c1:
-                st.write(f"**{mno}**")
-            with c2:
-                st.write(item_name)
-            with c3:
-                st.write(purpose if purpose else "-")
-            with c4:
-                st.write(f"{issue_user} / {issue_dt}")
-            with c5:
-                if st.button("반납", key=f"return_btn_{mno}"):
-                    st.session_state.selected_return_target = mno
+        selected_option = st.selectbox("반납할 장비 선택", issued_options, key="return_target_select")
+        selected_manage_no = selected_option.split("|")[0].strip()
 
-        st.divider()
+        target_record = None
+        for r in current_issued:
+            if safe_str(r.get("관리 NO.", "")) == selected_manage_no:
+                target_record = r
+                break
 
-        selected_target = st.session_state.get("selected_return_target", "")
-        if not selected_target:
-            st.info("반납할 장비의 **반납 버튼**을 눌러주세요.")
-        else:
-            target_record = None
-            for r in current_issued:
-                if safe_str(r.get("관리 NO.", "")) == selected_target:
-                    target_record = r
-                    break
+        if target_record is not None:
+            st.markdown("**현재 불출 정보**")
+            st.dataframe(pd.DataFrame([target_record]), use_container_width=True)
 
-            if target_record is None:
-                st.warning("선택한 반납 대상 정보를 찾을 수 없습니다.")
-            else:
-                st.subheader(f"↩️ 반납 등록 - {selected_target}")
+            with st.form("return_form"):
+                col1, col2, col3 = st.columns(3)
 
-                target_manage_no = safe_str(target_record.get("관리 NO.", ""))
-                target_row = equip_df.loc[equip_df[KEY_COL].astype(str) == target_manage_no]
-                target_master = target_row.iloc[0] if not target_row.empty else None
+                with col1:
+                    return_user = st.text_input("반납자 이름")
+                    return_department = st.text_input("소속 부서", key="return_department")
 
-                with st.form("return_form"):
-                    col1, col2, col3 = st.columns(3)
+                with col2:
+                    st.text_input("관리 NO.", value=safe_str(target_record.get("관리 NO.", "")), disabled=True)
+                    st.text_input("장비명", value=safe_str(target_record.get("장비명", "")), disabled=True)
+                    st.text_input("모델명", value=safe_str(target_record.get("모델명", "")), disabled=True)
 
-                    with col1:
-                        return_user = st.text_input("반납자 이름", value=st.session_state.get("user_name", ""))
-                        return_department = st.text_input("소속 부서", value=st.session_state.get("department", ""))
+                with col3:
+                    return_warehouse = st.selectbox("반납 창고 위치", ["3층", "4층"], key="return_warehouse")
+                    st.text_input("기존 불출자", value=safe_str(target_record.get("불출자", "")), disabled=True)
 
-                    with col2:
-                        st.text_input("관리 NO.", value=target_manage_no, disabled=True)
-                        st.text_input("장비명", value=safe_str(target_record.get("장비명", "")), disabled=True)
-                        st.text_input("모델명", value=safe_str(target_record.get("모델명", "")), disabled=True)
+                return_note = st.text_input(
+                    "반납 메모",
+                    placeholder="예: 정상 반납, 점검 필요, 부속품 포함 등"
+                )
 
-                    with col3:
-                        return_warehouse = st.selectbox("반납 창고 위치", ["3층", "4층"], key="return_warehouse")
-                        st.text_input("기존 불출자", value=safe_str(target_record.get("불출자", "")), disabled=True)
+                return_submitted = st.form_submit_button("✅ 반납 등록")
 
-                    return_note = st.text_input(
-                        "반납 메모",
-                        placeholder="예: 정상 반납, 점검 필요, 부속품 포함 등"
-                    )
+            if return_submitted:
+                if not return_user.strip():
+                    st.warning("⚠️ 반납자 이름은 필수입니다.")
+                else:
+                    now = now_kst()
+                    return_datetime = format_dt(now)
+                    return_date_dot = format_date_dot(now)
 
-                    return_submitted = st.form_submit_button("✅ 반납 등록")
+                    return_record = {
+                        "불출자": return_user.strip(),   # 이벤트 처리자
+                        "부서": return_department.strip(),
+                        "관리 NO.": safe_str(target_record.get("관리 NO.", "")),
+                        "serial NO.": safe_str(target_record.get("serial NO.", "")),
+                        "장비명": safe_str(target_record.get("장비명", "")),
+                        "모델명": safe_str(target_record.get("모델명", "")),
+                        "제조회사": safe_str(target_record.get("제조회사", "")),
+                        "장비 구분": safe_str(target_record.get("장비 구분", "")),
+                        "창고": return_warehouse,
+                        "사용 목적": return_note.strip() if return_note.strip() else "반납",
+                        "불출 일시": return_datetime,
+                        "불출 일자": return_date_dot,
+                        "반납 예정일": safe_str(target_record.get("반납 예정일", "")),
+                        "상태": "반납",
+                    }
 
-                if return_submitted:
-                    if not return_user.strip():
-                        st.warning("⚠️ 반납자 이름은 필수입니다.")
+                    ok, msg = save_db(return_record)
+                    if not ok:
+                        st.error(f"DB 저장 실패: {msg}")
                     else:
-                        now = now_kst()
-                        return_datetime = format_dt(now)
-                        return_date_dot = format_date_dot(now)
+                        st.session_state.records.append(return_record)
 
-                        return_record = {
-                            "불출자": return_user.strip(),  # 이벤트 처리자
-                            "부서": return_department.strip(),
-                            "관리 NO.": safe_str(target_record.get("관리 NO.", "")),
-                            "serial NO.": safe_str(target_record.get("serial NO.", "")),
-                            "장비명": safe_str(target_record.get("장비명", "")),
-                            "모델명": safe_str(target_record.get("모델명", "")),
-                            "제조회사": safe_str(target_record.get("제조회사", "")),
-                            "장비 구분": safe_str(target_record.get("장비 구분", "")),
-                            "창고": return_warehouse,
-                            "사용 목적": return_note.strip() if return_note.strip() else "반납",
-                            "불출 일시": return_datetime,
-                            "불출 일자": return_date_dot,
-                            "반납 예정일": safe_str(target_record.get("반납 예정일", "")),
-                            "상태": "반납",
-                        }
+                        updated_master = build_updated_master(equip_df, st.session_state.records)
 
-                        ok, msg = save_db(return_record)
-                        if not ok:
-                            st.error(f"DB 저장 실패: {msg}")
-                        else:
-                            st.session_state.records.append(return_record)
-
-                            updated_master = build_updated_master(equip_df, st.session_state.records)
-
-                            try:
-                                save_equipment_master(EQUIP_FILE, updated_master)
-                                st.cache_data.clear()
-                                equip_df = load_equipment_master(EQUIP_FILE)
-                            except Exception as e:
-                                st.warning(f"마스터 파일 저장은 생략되었습니다(권한/환경 이슈 가능): {e}")
-
-                            # 반납 완료 후 origin cache 제거
-                            pop_origin_cache(target_manage_no)
-                            st.session_state.selected_return_target = ""
-
+                        try:
+                            save_equipment_master(EQUIP_FILE, updated_master)
                             st.cache_data.clear()
-                            st.success("✅ 반납 등록 완료! (한국 표준시 기준)")
-                            st.rerun()
+                            equip_df = load_equipment_master(EQUIP_FILE)
+                        except Exception as e:
+                            st.warning(f"마스터 파일 저장은 생략되었습니다(권한/환경 이슈 가능): {e}")
+
+                        st.cache_data.clear()
+                        st.success("✅ 반납 등록 완료! (한국 표준시 기준)")
+                        st.rerun()
 
 # =========================
 # 현재 불출 현황
@@ -653,18 +597,17 @@ else:
     st.info("현재 불출 중인 장비가 없습니다.")
 
 # =========================
-# 관리자 전용: DB 이력 / 마스터 보기
+# DB 불출/반납 이력
 # =========================
-if st.session_state.get("role", "사용자") == "관리자":
-    st.divider()
-    st.subheader("📒 불출/반납 이력 (Supabase)")
+st.subheader("📒 불출/반납 이력")
 
-    history_df = load_db_history()
-    st.dataframe(history_df, use_container_width=True)
+history_df = load_db_history()
+st.dataframe(history_df, use_container_width=True)
 
-    st.subheader("📌 장비 리스트 전체 보기 (마스터 데이터)")
-    updated_master_view = build_updated_master(equip_df, st.session_state.records)
-    st.dataframe(updated_master_view, use_container_width=True)
-else:
-    st.divider()
-    st.info("사용자 권한에서는 전체 이력/마스터 데이터 전체 보기는 숨김 처리됩니다.")
+# =========================
+# 마스터 데이터 보기
+# =========================
+st.subheader("📌 장비 리스트 전체 보기 (마스터 데이터)")
+
+updated_master_view = build_updated_master(equip_df, st.session_state.records)
+st.dataframe(updated_master_view, use_container_width=True)
